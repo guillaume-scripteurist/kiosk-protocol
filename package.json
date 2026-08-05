@@ -1,6 +1,6 @@
 {
   "name": "@mediatech/kiosk-protocol",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Contrat WebSocket de pilotage d'une borne ScriptEurist : événements, consignes, état.",
   "type": "module",
   "sideEffects": false,
