@@ -14,17 +14,31 @@
       "require": "./dist/index.cjs"
     }
   },
-  "files": ["dist"],
-  "engines": { "node": ">=18" },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",
-    "test": "npm run build && node --test \"test/*.test.mjs\""
+    "test": "npm run build && node --test \"test/*.test.mjs\"",
+    "prepare": "npm run build"
   },
-  "keywords": ["kiosk", "websocket", "protocol", "scripteurist"],
+  "keywords": [
+    "kiosk",
+    "websocket",
+    "protocol",
+    "scripteurist"
+  ],
   "license": "UNLICENSED",
   "devDependencies": {
     "tsup": "^8.3.0",
     "typescript": "^5.9.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/guillaume-scripteurist/kiosk-protocol.git"
   }
 }
