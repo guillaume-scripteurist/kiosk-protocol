@@ -39,6 +39,6 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+ssh://git@github.com/guillaume-scripteurist/kiosk-protocol.git"
+    "url": "git+https://github.com/guillaume-scripteurist/kiosk-protocol.git"
   }
 }
