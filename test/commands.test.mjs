@@ -1,43 +1,41 @@
 /**
- * Le normaliseur est la seule barrière entre la console et une borne posée dans
- * une salle. Il vivait dans `server.js` ; ces tests fixent son comportement
- * AVANT la bascule, pour que l'extraction ne soit pas l'occasion d'un
- * changement silencieux.
- *
- * Chaque cas décrit une bêtise qu'on peut faire depuis la console, et ce que la
- * borne doit en recevoir — ou ne pas en recevoir.
+ * Le normaliseur est la seule barrière entre la console et une borne posée
+ * dans une salle. Chaque cas décrit une bêtise qu'on peut faire depuis la
+ * console, et ce que la borne doit en recevoir — ou ne pas en recevoir.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  KIOSK_ACTIONS,
-  KIOSK_EVENTS,
-  normalizeKioskCommand,
-  normalizeKioskAllowlist,
-  kioskDuration,
+  DEVICE_ACTIONS,
+  DEVICE_EVENTS,
+  normalizeDeviceCommand,
+  normalizeParticipantList,
+  deviceDuration,
 } from '../dist/index.js';
 
-const cmd = (action, payload) => normalizeKioskCommand({ action, payload });
+const cmd = (action, payload) => normalizeDeviceCommand({ action, payload });
 
 test('une action inconnue est refusée, pas ignorée', () => {
   assert.throws(() => cmd('reboot', {}), /Consigne inconnue : reboot/);
   assert.throws(() => cmd('', {}), /\(vide\)/);
 });
 
-test('mode ciblé sans joueur : refusé', () => {
+test('mode ciblé sans participant : refusé', () => {
   // Sans ce refus, la borne passerait en « attente de quelqu'un » sans savoir
   // qui, et refuserait tous les badges sans jamais dire pourquoi.
-  assert.throws(() => cmd('mode', { mode: 'targeted' }), /exige un joueur/);
-  assert.deepEqual(
-    cmd('mode', { mode: 'targeted', pseudo: 'Marie' }),
-    { action: 'mode', mode: 'targeted', target: { pseudo: 'Marie', token: null }, allowed: null },
-  );
+  assert.throws(() => cmd('mode', { mode: 'targeted' }), /exige un participant/);
+  assert.deepEqual(cmd('mode', { mode: 'targeted', displayName: 'Marie' }), {
+    action: 'mode',
+    mode: 'targeted',
+    target: { id: null, displayName: 'Marie' },
+    allowed: null,
+  });
 });
 
 test('mode liste avec une liste vide : refusé', () => {
   // Une liste vide fermerait la borne en donnant l'impression de l'ouvrir.
-  assert.throws(() => cmd('mode', { mode: 'allowlist', allowed: [] }), /au moins un joueur/);
+  assert.throws(() => cmd('mode', { mode: 'allowlist', allowed: [] }), /au moins un participant/);
 });
 
 test('mode inconnu : refusé', () => {
@@ -45,25 +43,25 @@ test('mode inconnu : refusé', () => {
 });
 
 test('la liste d\'autorisation déduplique et borne', () => {
-  const rows = normalizeKioskAllowlist([
-    { token: 'a', pseudo: 'Marie' },
-    { token: 'a', pseudo: 'Marie encore' }, // même jeton : ignoré
-    { pseudo: 'Paul' },
-    { pseudo: 'paul' },                      // même pseudo, casse différente
-    { token: '', pseudo: '' },               // vide : ignoré
+  const rows = normalizeParticipantList([
+    { id: 'p1', displayName: 'Marie' },
+    { id: 'p1', displayName: 'Marie encore' }, // même identifiant : ignoré
+    { displayName: 'Paul' },
+    { displayName: 'paul' },                    // même nom, casse différente
+    { id: '', displayName: '' },                // vide : ignoré
   ]);
   assert.deepEqual(rows, [
-    { token: 'a', pseudo: 'Marie' },
-    { token: null, pseudo: 'Paul' },
+    { id: 'p1', displayName: 'Marie' },
+    { id: null, displayName: 'Paul' },
   ]);
 });
 
-test('le pseudo voyage à côté du jeton', () => {
-  // La borne doit pouvoir afficher « Réservé à Marie » même sans l'annuaire de
-  // la session sous la main.
-  const c = cmd('allow', { allowed: [{ token: 'tok', pseudo: 'Marie' }] });
-  assert.equal(c.allowed[0].pseudo, 'Marie');
-  assert.equal(c.allowed[0].token, 'tok');
+test('le nom voyage à côté de l\'identifiant', () => {
+  // La borne doit pouvoir afficher « Réservé à Marie » sans rien résoudre :
+  // elle n'a pas d'annuaire, et peut ne pas avoir de réseau.
+  const c = cmd('allow', { allowed: [{ id: 'p1', displayName: 'Marie' }] });
+  assert.equal(c.allowed[0].displayName, 'Marie');
+  assert.equal(c.allowed[0].id, 'p1');
 });
 
 test('un message vide n\'atteint jamais la borne', () => {
@@ -80,44 +78,48 @@ test('les textes sont tronqués, pas refusés', () => {
 });
 
 test('la durée reste dans des bornes tenables', () => {
-  assert.equal(kioskDuration(0), 5);
-  assert.equal(kioskDuration(99999), 600);
-  assert.equal(kioskDuration('45'), 45);
-  assert.equal(kioskDuration('n\'importe quoi'), 5);
+  assert.equal(deviceDuration(0), 5);
+  assert.equal(deviceDuration(99999), 600);
+  assert.equal(deviceDuration('45'), 45);
+  assert.equal(deviceDuration('n\'importe quoi'), 5);
 });
 
-test('démarrage sans joueur : refusé', () => {
-  assert.throws(() => cmd('start', {}), /Indiquez un joueur/);
-  assert.deepEqual(cmd('start', { pseudo: 'Léa', question: 'Ton pire aveu ?' }), {
+test('démarrage sans participant : refusé', () => {
+  assert.throws(() => cmd('start', {}), /Indiquez un participant/);
+  assert.deepEqual(cmd('start', { displayName: 'Léa', question: 'Ton pire aveu ?' }), {
     action: 'start',
-    player: { pseudo: 'Léa', token: null },
+    participant: { id: null, displayName: 'Léa' },
     question: 'Ton pire aveu ?',
   });
 });
 
 test('question:next laisse la playlist à résoudre par l\'appelant', () => {
-  // La borne ne peut pas deviner la playlist d'une question improvisée : le
-  // serveur la résout après normalisation, avant l'envoi.
   const c = cmd('question:next', { text: 'Improvisée' });
   assert.equal(c.playlistId, null);
   assert.equal(c.text, 'Improvisée');
+});
+
+test('identify borne la durée du clignotement', () => {
+  // Trop court, on rate le signal en traversant la salle ; trop long, la borne
+  // clignote encore devant les invités quand on l'a déjà trouvée.
+  assert.equal(cmd('identify', {}).seconds, 10);
+  assert.equal(cmd('identify', { seconds: 1 }).seconds, 2);
+  assert.equal(cmd('identify', { seconds: 999 }).seconds, 60);
 });
 
 /**
  * Le normaliseur tourne DEUX fois sur le trajet console → serveur → borne.
  * S'il n'est pas idempotent, le second passage abîme la consigne au moment
  * précis où plus personne ne peut le voir : sur la borne, dans la salle.
- *
- * On repasse ici chaque sortie dans la fonction, et on exige l'égalité.
  */
 test('normaliser deux fois donne le même résultat', () => {
   const cas = [
-    ['mode', { mode: 'targeted', pseudo: 'Marie', token: 'tok-1' }],
-    ['mode', { mode: 'allowlist', allowed: [{ token: 'a', pseudo: 'Marie' }, { pseudo: 'Paul' }] }],
+    ['mode', { mode: 'targeted', id: 'p1', displayName: 'Marie' }],
+    ['mode', { mode: 'allowlist', allowed: [{ id: 'p1', displayName: 'Marie' }, { displayName: 'Paul' }] }],
     ['mode', { mode: 'open' }],
-    ['start', { pseudo: 'Léa', token: 'tok-2', question: 'Ton pire aveu ?' }],
+    ['start', { id: 'p2', displayName: 'Léa', question: 'Ton pire aveu ?' }],
     ['welcome', { title: 'Bonjour', subtitle: 'Scannez votre badge' }],
-    ['allow', { allowed: [{ token: 'b', pseudo: 'Tom' }] }],
+    ['allow', { allowed: [{ id: 'p3', displayName: 'Tom' }] }],
     ['flash', { message: 'Deux minutes', level: 'warn' }],
     ['abort', { reason: 'Pause' }],
     ['duration', { seconds: 45 }],
@@ -125,13 +127,14 @@ test('normaliser deux fois donne le même résultat', () => {
     ['questionMode', { mode: 'sequence' }],
     ['sequence', { ids: ['q1', 'q2'] }],
     ['question:delete', { id: 'q9' }],
+    ['identify', { seconds: 15 }],
     ['stop', {}],
     ['refresh', {}],
   ];
   for (const [action, payload] of cas) {
-    const une = normalizeKioskCommand({ action, payload });
+    const une = normalizeDeviceCommand({ action, payload });
     const { action: a, ...reste } = une;
-    const deux = normalizeKioskCommand({ action: a, payload: reste });
+    const deux = normalizeDeviceCommand({ action: a, payload: reste });
     assert.deepEqual(deux, une, `« ${action} » abîmée au second passage`);
   }
 });
@@ -142,7 +145,7 @@ test('la playlist résolue par le serveur survit à la revalidation', () => {
   // exactement la vidéo qu'on cherchera ensuite.
   const pousse = { action: 'question:next', text: 'Improvisée', playlistId: 'pl-42' };
   const { action, ...reste } = pousse;
-  assert.equal(normalizeKioskCommand({ action, payload: reste }).playlistId, 'pl-42');
+  assert.equal(normalizeDeviceCommand({ action, payload: reste }).playlistId, 'pl-42');
 });
 
 test('question:delete sans identifiant : refusé', () => {
@@ -171,28 +174,26 @@ test('les actions sans charge utile restent minimales', () => {
 test('toute action déclarée est réellement traitée', () => {
   // Garde-fou : ajouter une action à la liste sans l'implémenter est l'erreur
   // qui donne une consigne acceptée par le serveur et ignorée par la borne.
-  for (const action of KIOSK_ACTIONS) {
-    // On fournit de quoi satisfaire les actions qui exigent un contenu.
+  for (const action of DEVICE_ACTIONS) {
     const payload = {
       mode: action === 'mode' ? 'open' : 'random',
       message: 'msg',
-      pseudo: 'Marie',
+      displayName: 'Marie',
       id: 'q1',
       ids: ['q1'],
     };
-    const out = normalizeKioskCommand({ action, payload });
+    const out = normalizeDeviceCommand({ action, payload });
     assert.equal(out.action, action, `action ${action} non traitée`);
   }
 });
 
-test('les noms d\'événements ne bougent pas', () => {
-  // Un parc de bornes déjà posé ne se met pas à jour le soir de l'événement :
-  // renommer ces cinq chaînes couperait toutes les bornes installées.
-  assert.deepEqual(KIOSK_EVENTS, {
-    JOIN: 'kiosk_join',
-    WELCOME: 'kiosk_welcome',
-    ERROR: 'kiosk_error',
-    COMMAND: 'kiosk_command',
-    STATE: 'kiosk_state',
+test('les six événements de la v2 sont ceux attendus', () => {
+  assert.deepEqual(DEVICE_EVENTS, {
+    HELLO: 'device_hello',
+    READY: 'device_ready',
+    ERROR: 'device_error',
+    COMMAND: 'device_command',
+    STATE: 'device_state',
+    ACK: 'device_ack',
   });
 });

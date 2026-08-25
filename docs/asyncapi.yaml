@@ -1,0 +1,346 @@
+asyncapi: 3.0.0
+
+info:
+  title: Protocole de pilotage des bornes ScriptEurist
+  version: '1.0.0'
+  description: |
+    Contrat WebSocket entre une **borne** (kiosque Electron) et son **serveur**.
+
+    Deux serveurs le parlent — `kiosk-hub` (registre durable de participants) et
+    `play` (soirées de jeux) — et une seule implémentation cliente l'applique.
+    C'est tout l'intérêt de la v1 du contrat : la borne n'a plus à savoir à qui
+    elle est branchée.
+
+    Ce document **décrit** ; le package `@mediatech/kiosk-protocol` **fait foi**.
+    Il vit ici, dans le package, et non dans l'un des deux serveurs : le mettre
+    chez l'un aurait fait de l'autre un invité dans son propre contrat.
+
+    ## Répartition poll / WebSocket / HTTP
+
+    Tout ne passe pas par cette socket, et c'est délibéré :
+
+    | Besoin | Transport | Pourquoi |
+    | --- | --- | --- |
+    | Identité d'un participant | badge signé, **vérifié hors ligne** — ou `POST /api/v1/devices/resolve-badge` en mode `resolve` | La v0 sondait l'annuaire complet toutes les 4 s. Un registre durable compte des milliers d'inscrits, et l'obtenir demandait à la borne un jeton donnant accès à l'identité de tout le monde. |
+    | Consignes de régie | **WebSocket** | « Ferme la borne », « affiche ce message » sont des gestes faits en regardant la pièce. Quatre secondes d'attente suffisent à refaire le geste, puis à douter du système. |
+    | Envoi des vidéos | ticket signé, puis PUT direct vers le stockage | Une borne posée dans une salle n'a ni URL publique à offrir au rappel, ni jeton à détenir. Le serveur signe, elle pousse. |
+
+  license:
+    name: UNLICENSED
+
+servers:
+  hub:
+    host: kiosk.scripteurist.fr
+    protocol: wss
+    pathname: /ws
+    description: Registre durable. Régime d'identité `signed`.
+  jeu:
+    host: play.scripteurist.fr
+    protocol: wss
+    pathname: /api/ws
+    description: Serveur de soirées. Régime d'identité `resolve`.
+
+channels:
+  borne:
+    address: /ws
+    title: Socket unique borne ↔ serveur
+    description: |
+      Une seule socket par borne, pour tout. Elle se rouvre seule avec un
+      back-off exponentiel (1 s → 30 s) et un battement de cœur de 20 s.
+    messages:
+      deviceHello: { $ref: '#/components/messages/deviceHello' }
+      deviceReady: { $ref: '#/components/messages/deviceReady' }
+      deviceError: { $ref: '#/components/messages/deviceError' }
+      deviceCommand: { $ref: '#/components/messages/deviceCommand' }
+      deviceState: { $ref: '#/components/messages/deviceState' }
+      deviceAck: { $ref: '#/components/messages/deviceAck' }
+
+operations:
+  sAnnoncer:
+    action: send
+    channel: { $ref: '#/channels/borne' }
+    summary: La borne s'annonce et présente son jeton.
+    messages: [{ $ref: '#/channels/borne/messages/deviceHello' }]
+  remonterEtat:
+    action: send
+    channel: { $ref: '#/channels/borne' }
+    summary: La borne remonte son écran et sa file d'envoi.
+    messages: [{ $ref: '#/channels/borne/messages/deviceState' }]
+  accuser:
+    action: send
+    channel: { $ref: '#/channels/borne' }
+    summary: La borne accuse réception d'une consigne.
+    messages: [{ $ref: '#/channels/borne/messages/deviceAck' }]
+  recevoir:
+    action: receive
+    channel: { $ref: '#/channels/borne' }
+    summary: Le serveur accepte, refuse ou commande.
+    messages:
+      - { $ref: '#/channels/borne/messages/deviceReady' }
+      - { $ref: '#/channels/borne/messages/deviceError' }
+      - { $ref: '#/channels/borne/messages/deviceCommand' }
+
+components:
+  messages:
+    deviceHello:
+      name: device_hello
+      title: Annonce de la borne
+      payload: { $ref: '#/components/schemas/HelloPayload' }
+
+    deviceReady:
+      name: device_ready
+      title: Rattachement accepté
+      description: |
+        Porte le **régime d'identité** et, en mode `signed`, le secret de
+        vérification des badges. Ce secret ne circule qu'ici, sur une socket
+        déjà authentifiée par le jeton de la borne. C'est un secret de
+        VÉRIFICATION : il ne permet pas de se faire passer pour un participant
+        auprès du serveur, seulement de reconnaître un badge hors ligne.
+      payload: { $ref: '#/components/schemas/ReadyPayload' }
+
+    deviceError:
+      name: device_error
+      title: Refus ou incident
+      description: |
+        `fatal: true` signifie que réessayer à la même cadence ne servira à
+        rien — jeton refusé, borne révoquée, campagne inconnue. La borne espace
+        alors ses tentatives au lieu de marteler.
+      payload: { $ref: '#/components/schemas/ErrorPayload' }
+
+    deviceCommand:
+      name: device_command
+      title: Consigne de régie
+      description: |
+        `commandId` est obligatoire : c'est ce que la borne renvoie dans son
+        `device_ack`. Sans lui, la console pousserait sans jamais apprendre si
+        la consigne a été appliquée, et un organisateur qui ne voit rien bouger
+        ne pourrait pas distinguer une socket morte d'un écran qu'il ne regarde
+        pas.
+      payload: { $ref: '#/components/schemas/CommandEnvelope' }
+
+    deviceState:
+      name: device_state
+      title: État de la borne
+      payload: { $ref: '#/components/schemas/StatePayload' }
+
+    deviceAck:
+      name: device_ack
+      title: Accusé de réception
+      payload: { $ref: '#/components/schemas/AckPayload' }
+
+  schemas:
+    HelloPayload:
+      type: object
+      required: [deviceToken]
+      properties:
+        deviceToken:
+          type: string
+          description: |
+            Jeton propre à CETTE borne, obtenu à l'enrôlement. Il ne donne accès
+            qu'à sa propre socket et à ses propres dépôts vidéo : il ne pilote
+            aucune autre borne et ne lit aucun annuaire.
+        deviceId:
+          type: string
+          description: |
+            Identité stable, tirée une fois puis persistée. Sans elle, chaque
+            redémarrage ajouterait une ligne dans la console et l'exploitant
+            verrait s'accumuler des fantômes de la même machine.
+        name: { type: string, description: 'Nom lisible (« Salon », « Entrée »).' }
+        version: { type: string, description: 'Version applicative, pour repérer un parc hétérogène.' }
+        state: { $ref: '#/components/schemas/StatePayload' }
+
+    ReadyPayload:
+      type: object
+      required: [deviceId, name, identityMode]
+      properties:
+        deviceId: { type: string }
+        name: { type: string, description: 'Nom retenu par le serveur — il peut différer de celui proposé.' }
+        identityMode:
+          type: string
+          enum: [signed, resolve]
+        badgeSecret:
+          type: string
+          description: 'Mode `signed` uniquement. Permet la vérification hors ligne.'
+        contextLabel:
+          type: string
+          description: 'Libellé de la campagne ou de la session, affiché en confirmation.'
+
+    ErrorPayload:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+          description: 'Destiné à être affiché tel quel, sur une borne souvent loin de qui pourrait diagnostiquer.'
+        fatal: { type: boolean, default: false }
+
+    AckPayload:
+      type: object
+      required: [commandId, ok]
+      properties:
+        commandId: { type: string }
+        ok: { type: boolean }
+        error: { type: string, description: "Motif du refus, destiné à l'organisateur." }
+
+    CommandEnvelope:
+      type: object
+      required: [commandId, payload]
+      properties:
+        commandId: { type: string, format: uuid }
+        payload: { $ref: '#/components/schemas/Command' }
+
+    ParticipantRef:
+      type: object
+      description: |
+        Le nom voyage À CÔTÉ de l'identifiant, et pas seulement l'identifiant :
+        la borne doit pouvoir afficher « Réservé à Marie, Paul et Léa » sans
+        rien résoudre — elle n'a pas d'annuaire, et peut ne pas avoir de réseau.
+      properties:
+        id: { type: [string, 'null'] }
+        displayName: { type: [string, 'null'] }
+
+    Command:
+      description: |
+        Toute consigne passe par `normalizeDeviceCommand`, **aux deux bouts** :
+        côté serveur pour qu'une faute de frappe ne parte pas sur cinq bornes
+        n'y produire que des refus silencieux ; côté borne pour qu'une consigne
+        malformée soit refusée avec un message plutôt qu'appliquée à moitié.
+
+        Le normaliseur est **idempotent** — il tourne deux fois sur le trajet
+        console → serveur → borne — et un test le verrouille pour chaque
+        consigne.
+      oneOf:
+        - type: object
+          title: mode
+          required: [action, mode]
+          properties:
+            action: { const: mode }
+            mode: { type: string, enum: [open, targeted, allowlist, closed] }
+            target: { $ref: '#/components/schemas/ParticipantRef' }
+            allowed:
+              type: [array, 'null']
+              items: { $ref: '#/components/schemas/ParticipantRef' }
+              description: |
+                Obligatoire et non vide en mode `allowlist` : une liste vide
+                fermerait la borne en donnant l'impression de l'ouvrir.
+        - type: object
+          title: welcome
+          required: [action]
+          properties:
+            action: { const: welcome }
+            title: { type: string, maxLength: 120, description: 'Se lit à cinq mètres.' }
+            subtitle: { type: string, maxLength: 200, description: 'Explique le geste à faire.' }
+        - type: object
+          title: allow
+          required: [action, allowed]
+          properties:
+            action: { const: allow }
+            allowed:
+              type: array
+              items: { $ref: '#/components/schemas/ParticipantRef' }
+              description: 'Une liste vide rouvre la borne à tout le monde — le geste inverse.'
+        - type: object
+          title: flash
+          required: [action, message]
+          properties:
+            action: { const: flash }
+            message: { type: string, maxLength: 160 }
+            level: { type: string, enum: [info, warn, error], default: info }
+        - type: object
+          title: start
+          required: [action, participant]
+          properties:
+            action: { const: start }
+            participant: { $ref: '#/components/schemas/ParticipantRef' }
+            question: { type: [string, 'null'], maxLength: 400 }
+        - type: object
+          title: stop
+          properties: { action: { const: stop } }
+        - type: object
+          title: abort
+          properties:
+            action: { const: abort }
+            reason: { type: [string, 'null'], maxLength: 160 }
+        - type: object
+          title: duration
+          properties:
+            action: { const: duration }
+            seconds: { type: integer, minimum: 5, maximum: 600 }
+        - type: object
+          title: category
+          properties:
+            action: { const: category }
+            category: { type: [string, 'null'], maxLength: 40 }
+        - type: object
+          title: questionMode
+          properties:
+            action: { const: questionMode }
+            mode: { type: string, enum: [random, sequence], default: random }
+        - type: object
+          title: sequence
+          properties:
+            action: { const: sequence }
+            ids: { type: array, maxItems: 50, items: { type: string } }
+        - type: object
+          title: 'question:next'
+          description: |
+            La playlist est résolue par l'appelant **après** normalisation : la
+            borne ne peut pas la deviner pour une question improvisée, et sans
+            elle la vidéo partirait sans rangement — exactement la vidéo qu'on
+            cherchera ensuite. Une playlist déjà résolue survit à la
+            revalidation côté borne.
+          properties:
+            action: { const: 'question:next' }
+            text: { type: [string, 'null'], maxLength: 400 }
+            playlistId: { type: [string, 'null'] }
+        - type: object
+          title: 'question:delete'
+          description: "Retire une question LOCALE — celle qu'aucune playlist n'attend."
+          required: [action, id]
+          properties:
+            action: { const: 'question:delete' }
+            id: { type: string }
+        - type: object
+          title: refresh
+          properties: { action: { const: refresh } }
+        - type: object
+          title: identify
+          description: |
+            Fait clignoter l'écran de la borne visée. La console listait
+            « Borne 1, Borne 2, Borne 3 » sans que personne ne sache laquelle
+            était celle du fond de la salle : on renommait à l'aveugle, ou on
+            allait débrancher pour voir laquelle tombait.
+          properties:
+            action: { const: identify }
+            seconds: { type: integer, minimum: 2, maximum: 60, default: 10 }
+
+    StatePayload:
+      type: object
+      description: |
+        Volontairement tolérant. Une borne d'une version antérieure remonte un
+        état incomplet, et la console doit continuer de l'afficher : une borne
+        qui disparaît de l'écran est bien pire qu'une borne dont une case reste
+        vide.
+      properties:
+        screen: { type: string, enum: [idle, question, recording, thanks, closed] }
+        mode: { type: string, enum: [open, targeted, allowlist, closed] }
+        target: { $ref: '#/components/schemas/ParticipantRef' }
+        allowed: { type: [array, 'null'], items: { $ref: '#/components/schemas/ParticipantRef' } }
+        maxDuration: { type: integer }
+        questions: { type: array, items: { type: object } }
+        uploads:
+          type: object
+          properties:
+            enabled: { type: boolean }
+            jobs: { type: array, items: { type: object } }
+        offlineBadgesReady:
+          type: boolean
+          description: |
+            Le badge est-il vérifiable sans réseau en ce moment ? Faux en mode
+            `resolve`, ou avant réception du secret. La console le montre : une
+            borne qui perd le réseau dans ce cas ne laissera plus personne
+            enregistrer, et il vaut mieux le savoir avant la coupure.
+        localAdminUrl:
+          type: [string, 'null']
+          description: 'Régie web locale, plan de repli quand le serveur est injoignable.'
+        at: { type: integer, description: "Horloge de la borne, pour repérer une dérive." }
