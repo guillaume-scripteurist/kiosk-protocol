@@ -2,7 +2,7 @@ asyncapi: 3.0.0
 
 info:
   title: Protocole de pilotage des bornes ScriptEurist
-  version: '1.0.0'
+  version: '1.1.0'
   description: |
     Contrat WebSocket entre une **borne** (kiosque Electron) et son **serveur**.
 
@@ -21,9 +21,22 @@ info:
 
     | Besoin | Transport | Pourquoi |
     | --- | --- | --- |
-    | Identité d'un participant | badge signé, **vérifié hors ligne** — ou `POST /api/v1/devices/resolve-badge` en mode `resolve` | La v0 sondait l'annuaire complet toutes les 4 s. Un registre durable compte des milliers d'inscrits, et l'obtenir demandait à la borne un jeton donnant accès à l'identité de tout le monde. |
+    | Identité d'un participant | badge signé **vérifié hors ligne** (`signed`), ou `resolveBadge` de `deviceEndpoints()` (`resolve`) | La v0 sondait l'annuaire complet toutes les 4 s. Un registre durable compte des milliers d'inscrits, et l'obtenir demandait à la borne un jeton donnant accès à l'identité de tout le monde. |
     | Consignes de régie | **WebSocket** | « Ferme la borne », « affiche ce message » sont des gestes faits en regardant la pièce. Quatre secondes d'attente suffisent à refaire le geste, puis à douter du système. |
     | Envoi des vidéos | ticket signé, puis PUT direct vers le stockage | Une borne posée dans une salle n'a ni URL publique à offrir au rappel, ni jeton à détenir. Le serveur signe, elle pousse. |
+
+    ## Les URL ne sont pas dans ce document
+
+    Aucune route HTTP n'est écrite en dur ici, et c'est délibéré : les deux
+    serveurs ne rangent pas leurs URL pareil, et une adresse citée dans un
+    document décrit forcément l'un des deux. Ce fichier l'a fait — il donnait
+    la route du registre durable comme étant celle du régime `resolve`, qui
+    est celui des soirées. L'erreur ne se voyait pas, parce qu'elle ne cassait
+    rien : elle envoyait juste lire le mauvais serveur.
+
+    `deviceEndpoints(serverKind, …)` et `enrollEndpoint(…)`, dans `routes.ts`,
+    sont la seule traduction. Le contrat, ci-dessous, ne parle que des
+    **messages**.
 
   license:
     name: UNLICENSED
@@ -160,7 +173,13 @@ components:
           enum: [signed, resolve]
         badgeSecret:
           type: string
-          description: 'Mode `signed` uniquement. Permet la vérification hors ligne.'
+          description: >-
+            Mode `signed` uniquement. Secret HMAC de la campagne, qui permet à
+            la borne de vérifier un badge SANS RÉSEAU. Elle le persiste : sinon
+            un redémarrage pendant une coupure lui ferait tout refuser, ce qui
+            est exactement la situation que ce régime existe pour couvrir.
+            Le serveur reste interrogé ensuite, mais pour enrichir seulement —
+            son silence ne vaut pas refus.
         contextLabel:
           type: string
           description: 'Libellé de la campagne ou de la session, affiché en confirmation.'
