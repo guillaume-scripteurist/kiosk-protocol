@@ -11,7 +11,7 @@ info:
     C'est tout l'intérêt de la v1 du contrat : la borne n'a plus à savoir à qui
     elle est branchée.
 
-    Ce document **décrit** ; le package `@mediatech/kiosk-protocol` **fait foi**.
+    Ce document **décrit** ; le package `@scripteurist/kiosk-protocol` **fait foi**.
     Il vit ici, dans le package, et non dans l'un des deux serveurs : le mettre
     chez l'un aurait fait de l'autre un invité dans son propre contrat.
 

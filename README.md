@@ -1,4 +1,4 @@
-# @mediatech/kiosk-protocol
+# @scripteurist/kiosk-protocol
 
 Contrat WebSocket de pilotage d'une **borne** ScriptEurist. Isomorphe (Node et
 navigateur), aucune dépendance.
@@ -51,13 +51,13 @@ seul geste plutôt que dupliqué à côté de lui-même.
 
 ```jsonc
 "dependencies": {
-  "@mediatech/kiosk-protocol": "git+https://github.com/guillaume-scripteurist/kiosk-protocol.git#v1.0.0"
+  "@scripteurist/kiosk-protocol": "git+https://github.com/guillaume-scripteurist/kiosk-protocol.git#v1.0.0"
 }
 ```
 
 `dist/` n'est pas versionné : le script `prepare` construit le paquet après le
 clone. Si un import échoue sur un `dist/index.js` introuvable, npm a bloqué ce
-script — `npm approve-scripts @mediatech/kiosk-protocol`.
+script — `npm approve-scripts @scripteurist/kiosk-protocol`.
 
 ## Le protocole
 
@@ -85,7 +85,7 @@ langue — l'un durable, l'autre éphémère. Le serveur annonce le sien dans
 | `resolve` | Soirée de jeux | Le badge n'est pas signé — les joueurs naissent pendant la partie, aucun secret ne pouvait les précéder. La borne demande au serveur qui c'est. |
 
 ```js
-import { verifyBadge, parseBadge } from '@mediatech/kiosk-protocol';
+import { verifyBadge, parseBadge } from '@scripteurist/kiosk-protocol';
 
 // Mode signed — aucune requête, fonctionne wifi coupé.
 const { badge, rejection } = await verifyBadge(qrScanne, secretDeCampagne);
@@ -107,7 +107,7 @@ Une borne sort de son carton sans clavier utilisable. Le QR d'enrôlement lui
 donne tout ce qu'il lui faut, caméra comprise comme seule interface.
 
 ```js
-import { encodeDeviceConfigQr, parseDeviceConfigQr, enrollEndpoint, enrollBody } from '@mediatech/kiosk-protocol';
+import { encodeDeviceConfigQr, parseDeviceConfigQr, enrollEndpoint, enrollBody } from '@scripteurist/kiosk-protocol';
 
 // Côté serveur — la console affiche ce contenu en QR.
 const charge = encodeDeviceConfigQr({
@@ -161,7 +161,7 @@ de s'enrôler sur une instance qui émet encore l'ancien format.
 ## Usage — les consignes
 
 ```js
-import { DEVICE_EVENTS, normalizeDeviceCommand } from '@mediatech/kiosk-protocol';
+import { DEVICE_EVENTS, normalizeDeviceCommand } from '@scripteurist/kiosk-protocol';
 
 // Côté serveur — avant d'envoyer, pour qu'une faute de frappe dans la console
 // ne parte pas sur cinq bornes n'y produire que des refus silencieux.
