@@ -9,7 +9,9 @@ import {
   encodeDeviceConfigQr,
   parseDeviceConfigQr,
   DeviceConfigQrVersionError,
+  DeviceConfigQrServerKindError,
   DEVICE_CONFIG_QR_VERSION,
+  pickDeviceSettings,
 } from '../dist/index.js';
 
 test('aller-retour : ce qu\'on encode est ce qu\'on relit', () => {
@@ -21,6 +23,7 @@ test('aller-retour : ce qu\'on encode est ce qu\'on relit', () => {
     serverUrl: 'https://kiosk.scripteurist.fr',
     password: 'phrase-de-passe',
     target: null,
+    serverKind: 'play',
   });
 });
 
@@ -79,4 +82,50 @@ test('un mot de passe vide est refusé', () => {
     p: '',
   });
   assert.equal(parseDeviceConfigQr(qr), null);
+});
+
+test('la nature du serveur fait l\'aller-retour', () => {
+  const qr = encodeDeviceConfigQr({ serverUrl: 'https://hub.fr', password: 'p', serverKind: 'hub' });
+  assert.equal(JSON.parse(qr).s, 'hub');
+  assert.equal(parseDeviceConfigQr(qr).serverKind, 'hub');
+});
+
+test('un QR v2 est encore lu, et vaut « play »', () => {
+  // Les deux serveurs ne se déploient pas le même jour : une borne à jour doit
+  // continuer de s'enrôler sur une instance play qui émet encore la v2.
+  const v2 = JSON.stringify({ v: 2, t: 'kiosk-config', u: 'https://x.fr', p: 'p', g: 'sess-1' });
+  assert.deepEqual(parseDeviceConfigQr(v2), {
+    serverUrl: 'https://x.fr',
+    password: 'p',
+    target: 'sess-1',
+    serverKind: 'play',
+  });
+});
+
+test('un serveur de nature inconnue est un refus explicite', () => {
+  // Retomber sur « play » enverrait la borne frapper des URL inexistantes, et
+  // l'opérateur chercherait une panne de réseau devant un 404 muet.
+  const qr = JSON.stringify({
+    v: DEVICE_CONFIG_QR_VERSION, t: 'kiosk-config', u: 'https://x.fr', p: 'p', s: 'regie',
+  });
+  assert.throws(() => parseDeviceConfigQr(qr), DeviceConfigQrServerKindError);
+});
+
+test('le profil de borne ne laisse passer que les clés prévues', () => {
+  const profil = pickDeviceSettings({
+    KIOSK_MAX_DURATION: 90,
+    KIOSK_TRANSCODE: false,
+    KIOSK_ADMIN_KEY: 'secret',
+    // Ce qui décrit la MACHINE et non l'événement ne se pousse pas.
+    KIOSK_RECORDINGS_DIR: 'D:/videos',
+    KIOSK_NAME: 'Salon',
+    // Ni le résultat de l'enrôlement lui-même.
+    GAME_DEVICE_TOKEN: 'vole',
+    INVENTE: 'x',
+  });
+  assert.deepEqual(profil, {
+    KIOSK_MAX_DURATION: '90',
+    KIOSK_TRANSCODE: 'false',
+    KIOSK_ADMIN_KEY: 'secret',
+  });
 });

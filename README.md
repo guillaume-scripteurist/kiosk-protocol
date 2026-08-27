@@ -17,6 +17,20 @@ Sortir ce contrat du serveur avait immédiatement révélé un écart que person
 ne pouvait voir : la borne savait appliquer une consigne `sequence` que le
 serveur n'avait aucun moyen de lui envoyer.
 
+## Version 1.1 — l'enrôlement configure vraiment la borne
+
+La v1.0 posait un contrat de messages commun aux deux serveurs, mais la borne
+codait en dur les **URL** de `play` dans quatre de ses fichiers : elle ne
+pouvait matériellement pas s'enrôler sur `kiosk-hub`, quoi qu'annonce le
+protocole. Et l'enrôlement ne câblait que la liaison — durées, gestes, clé de
+régie restaient à saisir au clavier sur une machine qui n'en a pas.
+
+| v1.0 | v1.1 | Pourquoi |
+|---|---|---|
+| Routes de `play` en dur chez la borne | `serverKind` dans le QR + `deviceEndpoints()` | Un seul endroit sait que les deux serveurs ne rangent pas leurs URL pareil. |
+| QR **v2** | QR **v3**, la v2 restant lisible | Les deux serveurs ne se déploient pas le même jour. |
+| L'enrôlement pose 4 clés `GAME_*` | Il pose aussi un **profil de borne** (`settings`) | Installer une borne demandait encore un clavier pour tout le reste. |
+
 ## Version 1.0 — ce qui a changé
 
 La v0.x nommait ses événements `kiosk_*` et son README interdisait de les
@@ -86,6 +100,63 @@ if (lu) await serveur.resoudre(lu.code);
 s'affiche sur une borne posée dans une salle, souvent loin de qui pourrait
 diagnostiquer. « Badge périmé » et « badge d'une autre campagne » n'appellent
 pas le même geste.
+
+## Enrôlement — un QR, et la borne est configurée
+
+Une borne sort de son carton sans clavier utilisable. Le QR d'enrôlement lui
+donne tout ce qu'il lui faut, caméra comprise comme seule interface.
+
+```js
+import { encodeDeviceConfigQr, parseDeviceConfigQr, enrollEndpoint, enrollBody } from '@mediatech/kiosk-protocol';
+
+// Côté serveur — la console affiche ce contenu en QR.
+const charge = encodeDeviceConfigQr({
+  serverUrl: 'https://hub.exemple.fr',
+  password: motDePasseDEnrolement,
+  target: campagne.slug,
+  serverKind: 'hub',        // 'play' pour un serveur de soirées
+});
+
+// Côté borne — après confirmation à l'écran.
+const qr = parseDeviceConfigQr(chaineDecodee);
+const res = await fetch(enrollEndpoint(qr.serverKind, qr.serverUrl, qr.target), {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(enrollBody(qr.serverKind, { password: qr.password, target: qr.target, name })),
+});
+const { deviceToken, settings } = await res.json();
+```
+
+**Le QR porte un mot de passe, jamais un jeton.** Un QR s'affiche sur un écran
+et se photographie de loin. Un mot de passe volé rattache une borne de plus —
+qu'on voit dans la console et qu'on révoque. Un jeton volé, lui, pilote.
+
+**Il ne porte pas non plus les réglages.** Ceux-ci descendent dans la réponse
+d'enrôlement (`settings`), sur un échange déjà chiffré et déjà autorisé : la
+clé de régie est un secret, et un QR chargé de trente réglages devient trop
+dense pour une webcam. `DEVICE_SETTING_KEYS` fixe ce qu'un serveur a le droit
+de poser ; `KIOSK_RECORDINGS_DIR` et `KIOSK_NAME` en sont exclus parce qu'ils
+décrivent la machine et non l'événement.
+
+### `serverKind` — la seule chose que la borne ne peut pas deviner
+
+Les deux serveurs parlent le même protocole mais ne l'exposent pas aux mêmes
+URL : `play` range tout sous `/api/sessions/:id/…`, `kiosk-hub` sous
+`/api/v1/…`. Sonder les deux formes à l'aveugle consommerait un essai du
+compteur anti-force-brute à chaque enrôlement. Le serveur le **dit** donc, dans
+le QR qu'il fabrique lui-même, et `deviceEndpoints()` traduit — à un seul
+endroit.
+
+```js
+const routes = deviceEndpoints(serverKind, { serverUrl, target });
+routes.websocket        // wss://…/api/ws   ou  wss://…/ws
+routes.roster           // null sur un registre durable : il n'en rend pas
+routes.video.oneShot    // play signe en un temps, hub en deux
+```
+
+Un QR **v2** — sans `serverKind` — reste lisible et vaut `play` : les deux
+serveurs ne se déploient pas le même jour, et une borne à jour doit continuer
+de s'enrôler sur une instance qui émet encore l'ancien format.
 
 ## Usage — les consignes
 
